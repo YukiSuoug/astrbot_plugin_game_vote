@@ -1,6 +1,6 @@
 name: 游戏组队投票
 id: astrbot_plugin_game_vote
-version: 1.1.0
+version: 1.1.1
 author: AntGent
 description: 指令式发起游戏组队、名单查询与自动结算。
 repo: https://github.com/YukiSuoug/astrbot_plugin_game_vote
