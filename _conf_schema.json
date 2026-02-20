@@ -1,0 +1,8 @@
+{
+    "default_timeout": {
+        "name": "默认投票倒计时 (秒)",
+        "description": "发起投票后，如果没有人满，多久后自动结束投票结算。",
+        "type": "int",
+        "default": 300
+    }
+}
