@@ -2,19 +2,21 @@ import asyncio
 import logging
 from astrbot.api.star import Star, register
 from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.message_components import Plain
 from astrbot.api.all import Context
 from astrbot.core.config.astrbot_config import AstrBotConfig
 
+# --- 核心修复：完全参照你提供的 RestartPlugin 源码导入正确的库 ---
+from astrbot.core.message.components import Plain
+from astrbot.core.message.message_event_result import MessageChain
+
 logger = logging.getLogger("astrbot")
 PLUGIN_ID = "astrbot_plugin_game_vote"
-
 
 @register(
     PLUGIN_ID,
     "AntGent",
     "指令式组队投票插件",
-    "1.1.1",
+    "1.1.3",
     "https://github.com/AntGent/astrbot_plugin_game_vote",
 )
 class GameVotePlugin(Star):
@@ -24,10 +26,10 @@ class GameVotePlugin(Star):
         self.active_votes = {}  # {umo: {...}}
 
     def _get_timeout(self) -> int:
-        """获取配置中的超时时间"""
+        """获取超时时间"""
         try:
-            val = int(self.config.get("default_timeout", 300))
-            return max(5, val)
+            val = self.config.get("default_timeout", 300)
+            return max(5, int(val))
         except Exception:
             return 300
 
@@ -36,6 +38,7 @@ class GameVotePlugin(Star):
         origin_id = event.unified_msg_origin
 
         if origin_id in self.active_votes:
+            # 这里的 plain_result 是 event 快捷回复，不受影响
             yield event.plain_result(f"⚠️ 这里已经有一个【{self.active_votes[origin_id]['game_name']}】的投票在进行了。")
             return
 
@@ -51,10 +54,8 @@ class GameVotePlugin(Star):
         sender = event.get_sender_name()
         timeout = self._get_timeout()
         
-        # 调试日志：确认倒计时启动
-        logger.info(f"[GameVote] {sender} 发起投票，倒计时设定为 {timeout} 秒")
+        logger.info(f"[GameVote] 启动新投票: {game_name}, 倒计时: {timeout}秒")
 
-        # 创建任务并存储，防止被垃圾回收
         task = asyncio.create_task(self._timeout_task(event, origin_id, timeout))
         
         self.active_votes[origin_id] = {
@@ -92,7 +93,6 @@ class GameVotePlugin(Star):
         goal = vote["max_players"]
 
         if curr >= goal:
-            # 人满结算
             if vote["timer_task"]:
                 vote["timer_task"].cancel()
 
@@ -102,7 +102,6 @@ class GameVotePlugin(Star):
 
             yield event.plain_result(f"✅ 人齐啦！【{game}】组队成功！\n名单如下：\n- {members}")
         else:
-            # 修改：增加了 @前缀
             yield event.plain_result(f"@{sender} 加入了队伍 ({curr}/{goal})")
 
     @filter.command("都有谁")
@@ -122,32 +121,32 @@ class GameVotePlugin(Star):
         )
 
     async def _timeout_task(self, event: AstrMessageEvent, origin_id: str, delay: int):
-        """倒计时任务，时间到后自动结算"""
         try:
-            # 等待指定时间
             await asyncio.sleep(delay)
+            
+            vote = self.active_votes.get(origin_id)
+            if not vote:
+                return
 
-            # 检查投票是否存在
+            logger.info(f"[GameVote] 投票超时结算: {vote['game_name']}")
+            
+            members = ", ".join(vote["players"])
+            count = len(vote["players"])
+            game_name = vote["game_name"]
+            
+            # --- 关键修复：构造 MessageChain 对象 ---
+            # 直接传入列表会导致 'list object has no attribute chain' 错误
+            chain = MessageChain([
+                Plain(text=f"⏰ 【{game_name}】倒计时结束。\n最终集结 {count} 人：{members}")
+            ])
+            
+            # 使用正确的参数发送
+            await self.context.send_message(origin_id, chain)
+            
             if origin_id in self.active_votes:
-                vote = self.active_votes[origin_id]
-                logger.info(f"[GameVote] 倒计时结束，自动结算：{vote['game_name']}")
-                
-                members = ", ".join(vote["players"])
-                count = len(vote["players"])
-                
-                # 构建消息组件
-                msg = [
-                    Plain(text=f"⏰ 【{vote['game_name']}】倒计时结束。\n最终集结 {count} 人：{members}")
-                ]
-                
-                # 发送消息
-                await self.context.send_message(origin_id, msg)
-                
-                # 清理数据
                 del self.active_votes[origin_id]
                 
         except asyncio.CancelledError:
-            # 任务被取消（说明人齐了），不需要做任何事
             pass
         except Exception as e:
-            logger.error(f"[GameVote] 倒计时任务出错: {e}")
+            logger.error(f"[GameVote] 倒计时错误: {e}")
